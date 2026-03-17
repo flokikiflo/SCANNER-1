@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#07080F">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="application-name" content="DocScan Pro">
+  <meta name="apple-mobile-web-app-title" content="DocScan">
+  <meta name="description" content="Scanner de documents professionnel avec détection de perspective automatique">
+  <meta name="msapplication-TileColor" content="#07080F">
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Apple Touch Icons (seront générés dynamiquement par le SW) -->
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png">
+  <link rel="apple-touch-icon" sizes="144x144" href="icons/icon-144.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="icons/icon-128.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-96.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/icon-72.png">
+
+  <title>DocScan Pro</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    /* ─────────────────────────────────────────────
+       DESIGN TOKENS
+    ───────────────────────────────────────────── */
+    :root {
+      --bg:        #07080F;
+      --bg-mid:    #0D0F1E;
+      --bg-surf:   #141626;
+      --glass:     rgba(13,15,30,.88);
+      --accent:    #00F5C4;
+      --accent-d:  rgba(0,245,196,.12);
+      --accent-g:  rgba(0,245,196,.35);
+      --red:       #FF2D55;
+      --red-d:     rgba(255,45,85,.14);
+      --amber:     #FFB800;
+      --txt:       #EAEAF6;
+      --muted:     #525270;
+      --border:    rgba(255,255,255,.07);
+      --bacc:      rgba(0,245,196,.22);
+    }
+
+    *, *::before, *::after {
+      margin: 0; padding: 0; box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg); color: var(--txt);
+      font-family: 'Syne', sans-serif;
+      touch-action: manipulation;
+    }
+
+    /* ─────────────────────────────────────────────
+       LOADING SCREEN
+    ───────────────────────────────────────────── */
+    #loading {
+      position: fixed; inset: 0; z-index: 999;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px;
+      transition: opacity .5s, visibility .5s;
+    }
+    #loading.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+
+    .logo {
+      font-size: 30px; font-weight: 800; letter-spacing: -.04em;
+      display: flex; align-items: baseline; gap: 4px;
+    }
+    .logo em { color: var(--accent); font-style: normal; }
+    .logo small { font-size: 13px; font-weight: 400; color: var(--muted); letter-spacing: .04em; }
+
+    /* Animated scanner rings */
+    .rings {
+      position: relative; width: 72px; height: 72px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .ring {
+      position: absolute; border-radius: 50%; border: 2px solid transparent;
+    }
+    .ring-1 {
+      inset: 0; border-top-color: var(--accent);
+      animation: spin 1s linear infinite;
+      filter: drop-shadow(0 0 8px var(--accent-g));
+    }
+    .ring-2 {
+      inset: 10px; border-bottom-color: rgba(0,245,196,.4);
+      animation: spin 1.7s linear infinite reverse;
+    }
+    .ring-3 {
+      inset: 20px; border-left-color: rgba(0,245,196,.2);
+      animation: spin 2.3s linear infinite;
+    }
+    .ring-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent), 0 0 24px var(--accent-g);
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .load-bar-wrap { width: 190px; height: 2px; background: var(--bg-surf); border-radius: 2px; overflow: hidden; }
+    .load-bar      { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; transition: width .35s ease; }
+    .load-text     { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+
+    /* ─────────────────────────────────────────────
+       ERROR SCREEN
+    ───────────────────────────────────────────── */
+    #error-screen {
+      display: none; position: fixed; inset: 0; z-index: 998;
+      background: var(--bg);
+      align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px;
+      padding: 2rem; text-align: center;
+    }
+    #error-screen.show { display: flex; }
+    #error-screen h2  { color: var(--red); font-size: 1.1rem; }
+    #error-screen p   { color: var(--muted); font-size: .85rem; line-height: 1.6; max-width: 280px; }
+
+    /* ─────────────────────────────────────────────
+       FLASH + TOAST
+    ───────────────────────────────────────────── */
+    #flash {
+      position: fixed; inset: 0; z-index: 900;
+      background: #fff; opacity: 0; pointer-events: none;
+    }
+    #flash.on { animation: flashAnim .18s ease-out forwards; }
+    @keyframes flashAnim { 0%{opacity:.85} 100%{opacity:0} }
+
+    #toast {
+      position: fixed; bottom: 148px; left: 50%;
+      transform: translateX(-50%) translateY(14px);
+      z-index: 850; background: var(--bg-surf);
+      border: 1px solid var(--border); backdrop-filter: blur(12px);
+      padding: .5rem 1.1rem; border-radius: 20px;
+      font-size: .78rem; color: var(--muted);
+      opacity: 0; transition: opacity .2s, transform .2s;
+      pointer-events: none; white-space: nowrap;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ─────────────────────────────────────────────
+       APP LAYOUT
+    ───────────────────────────────────────────── */
+    #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+    /* ─────────────────────────────────────────────
+       SCANNER VIEW
+    ───────────────────────────────────────────── */
+    #scanner { position: relative; flex: 1; overflow: hidden; background: #000; }
+    #video   { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+    /* Crosshair grid (subtle) */
+    #scanner::before {
+      content: '';
+      position: absolute; inset: 0; z-index: 1; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 60px 60px;
+    }
+
+    /* ─────────────────────────────────────────────
+       HUD TOP
+    ───────────────────────────────────────────── */
+    #hud {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+      padding: max(16px, env(safe-area-inset-top)) 14px 20px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: linear-gradient(to bottom, rgba(7,8,15,.85) 0%, transparent 100%);
+    }
+
+    .chip {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--muted); background: rgba(255,255,255,.05);
+      border: 1px solid var(--border); padding: .26rem .56rem;
+      border-radius: 5px; transition: color .2s, border-color .2s, background .2s;
+    }
+    .chip.live {
+      color: var(--accent); border-color: var(--bacc);
+      background: var(--accent-d);
+      box-shadow: 0 0 12px rgba(0,245,196,.2);
+    }
+    .chip.btn { cursor: pointer; }
+    .chip.btn:hover { color: var(--txt); border-color: rgba(255,255,255,.15); }
+    .chip.btn:active { transform: scale(.95); }
+
+    .detect-row { display: flex; align-items: center; gap: 7px; }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
+      transition: background .25s, box-shadow .25s;
+    }
+    .dot.on {
+      background: var(--accent);
+      box-shadow: 0 0 9px var(--accent);
+      animation: pulseDot 1.4s ease-in-out infinite;
+    }
+    @keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+    /* ─────────────────────────────────────────────
+       BOTTOM CONTROLS
+    ───────────────────────────────────────────── */
+    #controls {
+      background: linear-gradient(to top, var(--bg) 62%, transparent);
+      padding: 6px 14px max(18px, env(safe-area-inset-bottom));
+      flex-shrink: 0;
+    }
+
+    /* Thumbnail strip */
+    #thumbs {
+      display: flex; gap: 7px; padding: 8px 0;
+      overflow-x: auto; scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    #thumbs::-webkit-scrollbar { display: none; }
+
+    .thumb {
+      flex-shrink: 0; width: 46px; height: 62px; border-radius: 7px;
+      overflow: hidden; border: 2px solid var(--border);
+      cursor: pointer; position: relative;
+      transition: border-color .18s, transform .15s;
+    }
+    .thumb:active { transform: scale(.92); }
+    .thumb:hover  { border-color: var(--accent); }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .thumb .pn {
+      position: absolute; bottom: 2px; right: 3px;
+      font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+      color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.8);
+    }
+    .thumb-new {
+      flex-shrink: 0; width: 46px; height: 62px; border-radius: 7px;
+      border: 2px dashed var(--border);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 20px; cursor: pointer;
+      transition: border-color .18s, color .18s;
+    }
+    .thumb-new:hover { border-color: var(--bacc); color: var(--accent); }
+
+    /* Action row */
+    #actions {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 2px 6px 0;
+    }
+
+    .side-btn {
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--glass); backdrop-filter: blur(14px);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--muted);
+      transition: border-color .18s, color .18s, transform .1s;
+      position: relative;
+    }
+    .side-btn:active { transform: scale(.88); }
+    .side-btn:hover  { border-color: var(--bacc); color: var(--accent); }
+    .side-btn svg    { width: 19px; height: 19px; }
+
+    .badge {
+      position: absolute; top: -5px; right: -5px;
+      min-width: 17px; height: 17px; border-radius: 9px;
+      background: var(--red); border: 2px solid var(--bg);
+      font-size: 9px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 3px; font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Main capture button */
+    #capture-btn {
+      width: 72px; height: 72px; border-radius: 50%;
+      background: var(--txt);
+      border: 4px solid var(--bg-surf);
+      outline: 2px solid rgba(255,255,255,.22);
+      cursor: pointer;
+      transition: transform .1s, background .28s, box-shadow .28s;
+      box-shadow: 0 4px 28px rgba(0,0,0,.5);
+    }
+    #capture-btn:active { transform: scale(.88); }
+    #capture-btn.ready {
+      background: var(--accent);
+      box-shadow:
+        0 4px 28px rgba(0,245,196,.45),
+        0 0 0 7px rgba(0,245,196,.1);
+    }
+
+    /* ─────────────────────────────────────────────
+       MODAL SYSTEM
+    ───────────────────────────────────────────── */
+    .modal-bg {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(7,8,15,.93); backdrop-filter: blur(10px);
+      display: flex; align-items: flex-end;
+      opacity: 0; visibility: hidden;
+      transition: opacity .3s, visibility .3s;
+    }
+    .modal-bg.open { opacity: 1; visibility: visible; }
+
+    .sheet {
+      width: 100%; background: var(--bg-surf);
+      border-radius: 22px 22px 0 0;
+      border-top: 1px solid rgba(255,255,255,.08);
+      padding: 18px 18px max(20px, env(safe-area-inset-bottom));
+      transform: translateY(100%);
+      transition: transform .38s cubic-bezier(.32,.72,0,1);
+      max-height: 90vh; overflow-y: auto;
+    }
+    .modal-bg.open .sheet { transform: translateY(0); }
+
+    .handle { width: 38px; height: 4px; background: var(--muted); border-radius: 2px; margin: 0 auto 18px; }
+    .sheet-title { font-size: 1.02rem; font-weight: 700; margin-bottom: 14px; }
+
+    /* Button helpers */
+    .row { display: flex; gap: 9px; }
+
+    .btn-p, .btn-s, .btn-d {
+      flex: 1; padding: 13px;
+      border-radius: 12px; cursor: pointer;
+      font-family: 'Syne', sans-serif; font-size: .88rem;
+      transition: transform .1s, opacity .15s;
+    }
+    .btn-p:active, .btn-s:active, .btn-d:active { transform: scale(.97); }
+
+    .btn-p { background: var(--accent); color: var(--bg); border: none; font-weight: 700; }
+    .btn-s { background: var(--bg-mid); color: var(--muted); border: 1px solid var(--border); font-weight: 600; }
+    .btn-d { background: var(--red-d); color: var(--red); border: 1px solid rgba(255,45,85,.28); font-weight: 600; }
+    .btn-d:hover { background: rgba(255,45,85,.22); }
+
+    /* ─────────────────────────────────────────────
+       PREVIEW MODAL
+    ───────────────────────────────────────────── */
+    #preview-wrap {
+      background: #000; border-radius: 10px; overflow: hidden;
+      margin-bottom: 14px;
+      display: flex; align-items: center; justify-content: center;
+      max-height: 52vh;
+    }
+    #preview-cnv {
+      max-width: 100%; max-height: 52vh;
+      object-fit: contain; display: block;
+    }
+
+    /* ─────────────────────────────────────────────
+       GALLERY MODAL
+    ───────────────────────────────────────────── */
+    .gal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .gal-header .sheet-title { margin-bottom: 0; }
+
+    .g-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 9px; margin-bottom: 12px;
+    }
+    .g-item {
+      position: relative; border-radius: 8px; overflow: hidden;
+      border: 2px solid var(--border); aspect-ratio: 3/4;
+      cursor: pointer; transition: border-color .18s;
+    }
+    .g-item:hover { border-color: var(--accent); }
+    .g-item img   { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .g-num {
+      position: absolute; top: 4px; left: 4px;
+      font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+      background: rgba(0,0,0,.72); color: #fff; padding: 2px 5px; border-radius: 4px;
+    }
+    .g-del {
+      position: absolute; top: 4px; right: 4px;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--red); color: #fff;
+      font-size: 10px; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: transform .15s;
+    }
+    .g-del:active { transform: scale(.88); }
+
+    /* ─────────────────────────────────────────────
+       EXPORT MODAL
+    ───────────────────────────────────────────── */
+    .exp-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--muted); margin-bottom: 16px;
+    }
+    .q-label {
+      font-size: .73rem; font-weight: 600; color: var(--muted);
+      letter-spacing: .08em; text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .q-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 9px; margin-bottom: 16px;
+    }
+    .q-opt {
+      padding: 13px 8px; background: var(--bg-mid);
+      border: 2px solid var(--border); border-radius: 11px;
+      text-align: center; cursor: pointer;
+      transition: border-color .18s, background .18s;
+    }
+    .q-opt.sel { border-color: var(--accent); background: var(--accent-d); }
+    .q-opt:active { transform: scale(.96); }
+    .q-name { font-weight: 700; font-size: .84rem; margin-bottom: 3px; }
+    .q-size { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
+
+    #share-wrap { margin-top: 10px; display: none; }
+    #share-btn {
+      width: 100%; padding: 13px;
+      background: var(--bg-mid); color: var(--accent);
+      border: 1px solid var(--bacc); border-radius: 12px;
+      font-family: 'Syne', sans-serif; font-size: .88rem;
+      font-weight: 700; cursor: pointer;
+      transition: background .18s;
+    }
+    #share-btn:hover { background: var(--accent-d); }
+    #share-btn:active { transform: scale(.97); }
+
+    /* ─────────────────────────────────────────────
+       FUTURE HOOKS (signature / watermark placeholders)
+       Add your modules below these comment markers.
+       --SIGNATURE-HOOK--
+       --WATERMARK-HOOK--
+    ───────────────────────────────────────────── */
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════
+     LOADING SCREEN
+══════════════════════════════════════ -->
+<div id="loading">
+  <div class="logo">DOC<em>SCAN</em> <small>PRO</small></div>
+  <div class="rings">
+    <div class="ring ring-1"></div>
+    <div class="ring ring-2"></div>
+    <div class="ring ring-3"></div>
+    <div class="ring-dot"></div>
+  </div>
+  <div class="load-bar-wrap"><div class="load-bar" id="pbar"></div></div>
+  <div class="load-text" id="ptext">Initialisation...</div>
+</div>
+
+<!-- ══════════════════════════════════════
+     ERROR SCREEN
+══════════════════════════════════════ -->
+<div id="error-screen">
+  <h2>⚠ Caméra requise</h2>
+  <p id="errmsg">L'accès à la caméra est nécessaire. Autorisez l'accès dans les réglages de votre navigateur, puis rechargez la page.</p>
+  <button class="btn-p" style="max-width:200px;margin-top:10px" onclick="location.reload()">Réessayer</button>
+</div>
+
+<!-- ══════════════════════════════════════
+     EFFECTS
+══════════════════════════════════════ -->
+<div id="flash"></div>
+<div id="toast"></div>
+
+<!-- ══════════════════════════════════════
+     MAIN APP
+══════════════════════════════════════ -->
+<div id="app">
+
+  <!-- SCANNER VIEW -->
+  <div id="scanner">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+
+    <!-- HUD Top -->
+    <div id="hud">
+      <div class="chip" id="res-chip">— × —</div>
+      <div class="detect-row">
+        <div class="dot" id="dot"></div>
+        <div class="chip" id="detect-chip">Scanning</div>
+      </div>
+      <div class="chip btn" id="flip-btn">↩ Cam</div>
+    </div>
+  </div>
+
+  <!-- BOTTOM CONTROLS -->
+  <div id="controls">
+    <!-- Thumbnail strip -->
+    <div id="thumbs">
+      <div class="thumb-new" id="thumb-new">+</div>
+    </div>
+    <!-- Action row -->
+    <div id="actions">
+      <!-- Gallery btn -->
+      <button class="side-btn" onclick="UI.openGallery()">
+        <span class="badge" id="cnt" style="display:none">0</span>
+        <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M3 9h18M9 21V9"/>
+        </svg>
+      </button>
+      <!-- Capture btn -->
+      <button id="capture-btn" onclick="CaptureModule.capture()"></button>
+      <!-- Export btn -->
+      <button class="side-btn" onclick="UI.openExport()">
+        <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+</div><!-- /#app -->
+
+<!-- ══════════════════════════════════════
+     PREVIEW MODAL
+══════════════════════════════════════ -->
+<div class="modal-bg" id="prev-modal">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title">Document capturé</div>
+    <div id="preview-wrap"><canvas id="preview-cnv"></canvas></div>
+    <div class="row">
+      <button class="btn-s" onclick="CaptureModule.retake()">↩ Reprendre</button>
+      <button class="btn-d" onclick="UI.cancelScan()">✕ Annuler</button>
+      <button class="btn-p" onclick="GalleryModule.keep()">✓ Garder</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     GALLERY MODAL
+══════════════════════════════════════ -->
+<div class="modal-bg" id="gal-modal">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="gal-header">
+      <div class="sheet-title">Pages scannées</div>
+      <button class="btn-s" style="flex:0;padding:7px 13px;font-size:.8rem" onclick="UI.closeGallery()">Fermer</button>
+    </div>
+    <div class="g-grid" id="g-grid"></div>
+    <div class="row">
+      <button class="btn-d" onclick="GalleryModule.clearAll()">Tout effacer</button>
+      <button class="btn-p" onclick="UI.openExport()">Exporter PDF →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     EXPORT MODAL
+══════════════════════════════════════ -->
+<div class="modal-bg" id="exp-modal">
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="sheet-title">Exporter en PDF</div>
+    <div class="exp-meta" id="exp-info">0 page</div>
+    <div class="q-label">Qualité de compression</div>
+    <div class="q-grid">
+      <div class="q-opt" data-q="0.45" onclick="ExportModule.setQ(this)">
+        <div class="q-name">Basse</div>
+        <div class="q-size">~0.1–0.3 MB</div>
+      </div>
+      <div class="q-opt sel" data-q="0.78" onclick="ExportModule.setQ(this)">
+        <div class="q-name">Moyenne</div>
+        <div class="q-size">~0.3–0.8 MB</div>
+      </div>
+      <div class="q-opt" data-q="0.95" onclick="ExportModule.setQ(this)">
+        <div class="q-name">Haute</div>
+        <div class="q-size">~0.8–2 MB</div>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn-s" onclick="UI.closeExport()">Annuler</button>
+      <button class="btn-p" id="gen-btn" onclick="ExportModule.generate()">📄 Générer PDF</button>
+    </div>
+    <div id="share-wrap">
+      <button id="share-btn" onclick="ExportModule.share()">↗ Partager / Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden: full-res capture canvas -->
+<canvas id="cap-canvas" style="display:none"></canvas>
+
+<!-- OpenCV.js (async — WASM) -->
+<script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="CVModule.onLoad()"></script>
+
+<!-- ═══════════════════════════════════════════════════════════
+     APPLICATION SCRIPT
+═══════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ───────────────────────────────────────
+   GLOBAL STATE
+─────────────────────────────────────── */
+const S = {
+  cvOK    : false,
+  camOK   : false,
+  scanning: true,
+  corners : null,   // [{x,y}×4] in overlay canvas space
+  scan    : null,   // { dataUrl, w, h } — current pending scan
+  pages   : [],     // array of { dataUrl, w, h }
+  pdfBlob : null,
+  quality : 0.78,
+  facing  : 'environment',
+  stream  : null,
+  raf     : null,
+  dcv     : null,   // detection canvas (640×480)
+  DW      : 640,
+  DH      : 480,
+  frame   : 0,
+};
+
+/* ───────────────────────────────────────
+   UI MODULE
+─────────────────────────────────────── */
+const UI = {
+  pbar(v, t) {
+    document.getElementById('pbar').style.width = v + '%';
+    if (t) document.getElementById('ptext').textContent = t;
+  },
+  hideLoading() {
+    document.getElementById('loading').classList.add('gone');
+  },
+  showError(msg) {
+    document.getElementById('error-screen').classList.add('show');
+    if (msg) document.getElementById('errmsg').textContent = msg;
+  },
+  toast(msg, ms = 2600) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._tt);
+    this._tt = setTimeout(() => el.classList.remove('show'), ms);
+  },
+  flash() {
+    const el = document.getElementById('flash');
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
+  },
+
+  /* ── PREVIEW ── */
+  openPreview() {
+    document.getElementById('prev-modal').classList.add('open');
+    S.scanning = false;
+  },
+  cancelScan() {
+    document.getElementById('prev-modal').classList.remove('open');
+    S.scanning = true;
+    S.scan = null;
+  },
+
+  /* ── GALLERY ── */
+  openGallery() {
+    GalleryModule.renderGrid();
+    document.getElementById('gal-modal').classList.add('open');
+  },
+  closeGallery() {
+    document.getElementById('gal-modal').classList.remove('open');
+  },
+
+  /* ── EXPORT ── */
+  openExport() {
+    if (!S.pages.length) { this.toast('Aucun scan à exporter'); return; }
+    const n = S.pages.length;
+    document.getElementById('exp-info').textContent = `${n} page${n > 1 ? 's' : ''}`;
+    document.getElementById('share-wrap').style.display = 'none';
+    document.getElementById('gen-btn').textContent = '📄 Générer PDF';
+    document.getElementById('gen-btn').disabled = false;
+    S.pdfBlob = null;
+    document.getElementById('gal-modal').classList.remove('open');
+    document.getElementById('exp-modal').classList.add('open');
+  },
+  closeExport() {
+    document.getElementById('exp-modal').classList.remove('open');
+  },
+
+  updateBadge() {
+    const n = S.pages.length;
+    const b = document.getElementById('cnt');
+    b.textContent = n;
+    b.style.display = n ? 'flex' : 'none';
+  },
+};
+
+/* Close modals on backdrop tap */
+['prev-modal', 'gal-modal', 'exp-modal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', function (e) {
+    if (e.target === this) {
+      this.classList.remove('open');
+      if (id === 'prev-modal') { S.scanning = true; S.scan = null; }
+    }
+  });
+});
+
+/* ───────────────────────────────────────
+   CV MODULE  (OpenCV.js wrapper)
+   --SIGNATURE-HOOK--   add signature overlay here
+   --WATERMARK-HOOK--   add watermark here
+─────────────────────────────────────── */
+const CVModule = {
+  onLoad() {
+    /* OpenCV.js may expose cv as Promise (4.x) or plain object */
+    const tryInit = () => {
+      if (typeof cv === 'undefined') { setTimeout(tryInit, 100); return; }
+      if (typeof cv.then === 'function') {
+        cv.then(mod => { window.cv = mod; this._ready(); });
+      } else if (cv.Mat) {
+        this._ready();
+      } else {
+        cv['onRuntimeInitialized'] = () => this._ready();
+      }
+    };
+    tryInit();
+  },
+
+  _ready() {
+    S.cvOK = true;
+    UI.pbar(72, 'OpenCV.js (WASM) prêt ✓');
+    checkReady();
+  },
+
+  /* ── Document corner detection ──────────────────
+     Returns [{x,y}×4] or null.
+     Input: canvas at DW×DH showing the visible video area.
+  ──────────────────────────────────────────────── */
+  findCorners(canvas) {
+    if (!S.cvOK || !window.cv || !canvas.width || !canvas.height) return null;
+    const cv = window.cv;
+    let src, gray, blur, edge, dil, ctrs, hier;
+    try {
+      src  = cv.imread(canvas);
+      gray = new cv.Mat();
+      blur = new cv.Mat();
+      edge = new cv.Mat();
+      dil  = new cv.Mat();
+      ctrs = new cv.MatVector();
+      hier = new cv.Mat();
+
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
+      cv.Canny(blur, edge, 45, 130);
+
+      const k = cv.Mat.ones(3, 3, cv.CV_8U);
+      cv.dilate(edge, dil, k, new cv.Point(-1, -1), 2);
+      k.delete();
+
+      cv.findContours(dil, ctrs, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+      const minArea = canvas.width * canvas.height * 0.05;
+      let best = null, bestArea = 0;
+
+      for (let i = 0; i < ctrs.size(); i++) {
+        const c    = ctrs.get(i);
+        const area = cv.contourArea(c);
+        if (area < minArea) continue;
+
+        const peri  = cv.arcLength(c, true);
+        const approx = new cv.Mat();
+        cv.approxPolyDP(c, approx, 0.02 * peri, true);
+
+        if (approx.rows === 4 && area > bestArea) {
+          bestArea = area;
+          if (best) best.delete();
+          best = approx;
+        } else {
+          approx.delete();
+        }
+      }
+
+      if (!best) return null;
+
+      const pts = [];
+      for (let i = 0; i < 4; i++) {
+        pts.push({ x: best.data32S[i * 2], y: best.data32S[i * 2 + 1] });
+      }
+      best.delete();
+
+      /* Sanity-check: minimum side length */
+      const ord = this.order(pts);
+      for (let i = 0; i < 4; i++) {
+        const a = ord[i], b = ord[(i + 1) % 4];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 15) return null;
+      }
+      return pts;
+
+    } catch (e) {
+      return null;
+    } finally {
+      [src, gray, blur, edge, dil, ctrs, hier].forEach(m => { try { m?.delete(); } catch (_) {} });
+    }
+  },
+
+  /* Order corners: TL, TR, BR, BL */
+  order(pts) {
+    const bySum  = [...pts].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+    const byDiff = [...pts].sort((a, b) => (a.x - a.y) - (b.x - b.y));
+    return [bySum[0], byDiff[3], bySum[3], byDiff[0]];
+  },
+
+  /* ── Perspective warp ──────────────────
+     srcCanvas : full-res capture canvas
+     corners   : [{x,y}×4] in srcCanvas coords
+     Returns   : warped canvas
+  ────────────────────────────────────── */
+  warp(srcCanvas, corners) {
+    if (!S.cvOK || !window.cv) return srcCanvas;
+    const cv = window.cv;
+    const [tl, tr, br, bl] = this.order(corners);
+    const W = Math.round(Math.max(
+      Math.hypot(br.x - bl.x, br.y - bl.y),
+      Math.hypot(tr.x - tl.x, tr.y - tl.y)
+    ));
+    const H = Math.round(Math.max(
+      Math.hypot(tr.x - br.x, tr.y - br.y),
+      Math.hypot(tl.x - bl.x, tl.y - bl.y)
+    ));
+    if (W < 20 || H < 20) return srcCanvas;
+
+    let src, M, dst, srcP, dstP;
+    try {
+      src  = cv.imread(srcCanvas);
+      srcP = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
+      dstP = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W - 1, 0, W - 1, H - 1, 0, H - 1]);
+      M    = cv.getPerspectiveTransform(srcP, dstP);
+      dst  = new cv.Mat();
+      cv.warpPerspective(src, dst, M, new cv.Size(W, H), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
+
+      const out = document.createElement('canvas');
+      out.width = W; out.height = H;
+      cv.imshow(out, dst);
+      return out;
+    } catch (e) {
+      console.error('warpPerspective failed:', e);
+      return srcCanvas;
+    } finally {
+      [src, srcP, dstP, M, dst].forEach(m => { try { m?.delete(); } catch (_) {} });
+    }
+  },
+};
+
+/* ───────────────────────────────────────
+   CAMERA MODULE
+─────────────────────────────────────── */
+const CameraModule = {
+  get video()   { return document.getElementById('video'); },
+  get overlay() { return document.getElementById('overlay'); },
+
+  async init() {
+    UI.pbar(20, 'Accès caméra...');
+    try {
+      await this.startStream(S.facing);
+      UI.pbar(52, 'Flux vidéo actif ✓');
+      S.camOK = true;
+      checkReady();
+    } catch (err) {
+      console.error(err);
+      UI.showError(
+        'Accès à la caméra refusé ou aucun périphérique trouvé.\n' +
+        'Autorisez l\'accès dans les réglages de votre navigateur et rechargez la page.'
+      );
+    }
+  },
+
+  async startStream(facing) {
+    if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: facing,
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    });
+
+    S.stream = stream;
+    this.video.srcObject = stream;
+    await new Promise(res => {
+      this.video.onloadedmetadata = () => { this.video.play(); res(); };
+    });
+
+    this.syncOverlay();
+
+    /* Keep overlay in sync with layout changes */
+    if (this._ro) this._ro.disconnect();
+    this._ro = new ResizeObserver(() => this.syncOverlay());
+    this._ro.observe(document.getElementById('scanner'));
+
+    const t = stream.getVideoTracks()[0].getSettings();
+    document.getElementById('res-chip').textContent = `${t.width}×${t.height}`;
+  },
+
+  syncOverlay() {
+    const v = this.video;
+    const ov = this.overlay;
+    const w = v.clientWidth || v.offsetWidth;
+    const h = v.clientHeight || v.offsetHeight;
+    if (w && h) { ov.width = w; ov.height = h; }
+  },
+
+  /* Returns the visible portion of the video frame (object-fit: cover math) */
+  visibleRect() {
+    const v = this.video;
+    const vW = v.videoWidth, vH = v.videoHeight;
+    const dW = v.clientWidth || 1, dH = v.clientHeight || 1;
+    if (!vW || !vH) return null;
+    const va = vW / vH, da = dW / dH;
+    let sx, sy, sw, sh;
+    if (va > da) {
+      sh = vH; sw = vH * da; sx = (vW - sw) / 2; sy = 0;
+    } else {
+      sw = vW; sh = vW / da; sx = 0; sy = (vH - sh) / 2;
+    }
+    return { sx, sy, sw, sh };
+  },
+
+  /* Draw visible video frame to canvas, return canvas */
+  captureFrame(targetCanvas) {
+    const v = this.video;
+    const r = this.visibleRect();
+    const c = targetCanvas;
+    if (r) {
+      c.width  = Math.round(r.sw);
+      c.height = Math.round(r.sh);
+      c.getContext('2d').drawImage(v, r.sx, r.sy, r.sw, r.sh, 0, 0, c.width, c.height);
+    } else {
+      c.width  = v.videoWidth;
+      c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0);
+    }
+    return c;
+  },
+
+  async flip() {
+    S.facing = S.facing === 'environment' ? 'user' : 'environment';
+    S.corners = null;
+    await this.startStream(S.facing);
+    UI.toast(S.facing === 'environment' ? '📷 Caméra arrière' : '🤳 Caméra avant');
+  },
+};
+
+document.getElementById('flip-btn').addEventListener('click', () => CameraModule.flip());
+
+/* ───────────────────────────────────────
+   DETECTION MODULE  (rAF loop)
+─────────────────────────────────────── */
+const DetectionModule = {
+  start() {
+    S.dcv = document.createElement('canvas');
+    S.dcv.width = S.DW; S.dcv.height = S.DH;
+    this._loop();
+  },
+
+  _loop() {
+    S.raf = requestAnimationFrame(() => this._loop());
+
+    const ov  = CameraModule.overlay;
+    const ctx = ov.getContext('2d');
+    ctx.clearRect(0, 0, ov.width, ov.height);
+
+    if (!ov.width || !ov.height) return;
+
+    /* Draw last known corners every frame for smooth visuals */
+    if (S.corners) this._drawQuad(ctx, S.corners);
+
+    if (!S.scanning || !S.cvOK) return;
+
+    const v = CameraModule.video;
+    if (v.readyState < 2) return;
+
+    /* Draw visible video to detection canvas every 4th frame */
+    S.frame++;
+    if (S.frame % 4 !== 0) return;
+
+    const r    = CameraModule.visibleRect();
+    const dCtx = S.dcv.getContext('2d');
+    if (r) {
+      dCtx.drawImage(v, r.sx, r.sy, r.sw, r.sh, 0, 0, S.DW, S.DH);
+    } else {
+      dCtx.drawImage(v, 0, 0, S.DW, S.DH);
+    }
+
+    /* Detect corners */
+    const pts = CVModule.findCorners(S.dcv);
+    if (pts) {
+      const sx = ov.width  / S.DW;
+      const sy = ov.height / S.DH;
+      S.corners = pts.map(p => ({ x: p.x * sx, y: p.y * sy }));
+    } else {
+      S.corners = null;
+    }
+
+    /* Update HUD */
+    const dot    = document.getElementById('dot');
+    const chip   = document.getElementById('detect-chip');
+    const capBtn = document.getElementById('capture-btn');
+    if (S.corners) {
+      dot.classList.add('on');
+      chip.textContent = 'Document détecté';
+      chip.classList.add('live');
+      capBtn.classList.add('ready');
+    } else {
+      dot.classList.remove('on');
+      chip.textContent = 'Scanning';
+      chip.classList.remove('live');
+      capBtn.classList.remove('ready');
+    }
+  },
+
+  _drawQuad(ctx, corners) {
+    const [tl, tr, br, bl] = CVModule.order(corners);
+    const pts = [tl, tr, br, bl];
+    ctx.save();
+
+    /* Fill */
+    ctx.beginPath();
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0,245,196,.07)';
+    ctx.fill();
+
+    /* Outline */
+    ctx.strokeStyle = 'rgba(0,245,196,.88)';
+    ctx.lineWidth   = 2.5;
+    ctx.setLineDash([]);
+    ctx.stroke();
+
+    /* Corner brackets */
+    const BL = 24;
+    pts.forEach((pt, i) => {
+      const nx = pts[(i + 1) % 4];
+      const pv = pts[(i + 3) % 4];
+      const d1 = Math.hypot(nx.x - pt.x, nx.y - pt.y) || 1;
+      const d2 = Math.hypot(pv.x - pt.x, pv.y - pt.y) || 1;
+      const u1 = { x: (nx.x - pt.x) / d1, y: (nx.y - pt.y) / d1 };
+      const u2 = { x: (pv.x - pt.x) / d2, y: (pv.y - pt.y) / d2 };
+
+      ctx.beginPath();
+      ctx.moveTo(pt.x + u1.x * BL, pt.y + u1.y * BL);
+      ctx.lineTo(pt.x, pt.y);
+      ctx.lineTo(pt.x + u2.x * BL, pt.y + u2.y * BL);
+      ctx.strokeStyle = 'rgba(255,255,255,.95)';
+      ctx.lineWidth   = 3;
+      ctx.lineCap     = 'round';
+      ctx.stroke();
+
+      /* Corner dot */
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#00F5C4';
+      ctx.fill();
+    });
+
+    ctx.restore();
+  },
+};
+
+/* ───────────────────────────────────────
+   CAPTURE MODULE
+─────────────────────────────────────── */
+const CaptureModule = {
+  async capture() {
+    UI.flash();
+    S.scanning = false;
+
+    const fullCanvas = CameraModule.captureFrame(document.getElementById('cap-canvas'));
+    let result;
+
+    if (S.corners && S.cvOK) {
+      /* Scale corners: overlay-space → full-res-canvas-space */
+      const ov = CameraModule.overlay;
+      const sx = fullCanvas.width  / ov.width;
+      const sy = fullCanvas.height / ov.height;
+      const fc = S.corners.map(p => ({ x: p.x * sx, y: p.y * sy }));
+      result = CVModule.warp(fullCanvas, fc);
+    } else {
+      result = fullCanvas;
+    }
+
+    const dataUrl = result.toDataURL('image/jpeg', 0.93);
+    S.scan = { dataUrl, w: result.width, h: result.height };
+
+    /* Show in preview modal */
+    const pc = document.getElementById('preview-cnv');
+    pc.width  = result.width;
+    pc.height = result.height;
+    pc.getContext('2d').drawImage(result, 0, 0);
+    UI.openPreview();
+  },
+
+  retake() {
+    document.getElementById('prev-modal').classList.remove('open');
+    S.scan     = null;
+    S.scanning = true;
+  },
+};
+
+/* ───────────────────────────────────────
+   GALLERY MODULE
+─────────────────────────────────────── */
+const GalleryModule = {
+  keep() {
+    if (!S.scan) return;
+    S.pages.push({ ...S.scan });
+    S.scan     = null;
+    S.scanning = true;
+    document.getElementById('prev-modal').classList.remove('open');
+    this.renderThumbs();
+    UI.updateBadge();
+    UI.toast(`✓ Page ${S.pages.length} ajoutée`);
+  },
+
+  renderThumbs() {
+    const row = document.getElementById('thumbs');
+    row.innerHTML = '';
+    S.pages.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'thumb';
+      d.innerHTML = `<img src="${p.dataUrl}" alt="page ${i+1}"><span class="pn">${i + 1}</span>`;
+      d.addEventListener('click', () => UI.openGallery());
+      row.appendChild(d);
+    });
+    const add = document.createElement('div');
+    add.className = 'thumb-new';
+    add.textContent = '+';
+    row.appendChild(add);
+  },
+
+  renderGrid() {
+    const g = document.getElementById('g-grid');
+    g.innerHTML = '';
+    if (!S.pages.length) {
+      g.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:2rem;color:var(--muted);font-size:.85rem">Aucun scan pour le moment</div>';
+      return;
+    }
+    S.pages.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'g-item';
+      d.innerHTML = `
+        <img src="${p.dataUrl}" alt="page ${i+1}">
+        <span class="g-num">${i + 1}</span>
+        <span class="g-del" data-i="${i}">✕</span>`;
+      d.querySelector('.g-del').addEventListener('click', e => {
+        e.stopPropagation();
+        this.deletePage(+e.currentTarget.dataset.i);
+      });
+      g.appendChild(d);
+    });
+  },
+
+  deletePage(i) {
+    S.pages.splice(i, 1);
+    this.renderThumbs();
+    this.renderGrid();
+    UI.updateBadge();
+    if (!S.pages.length) UI.closeGallery();
+  },
+
+  clearAll() {
+    if (!confirm('Effacer tous les scans ?')) return;
+    S.pages = [];
+    this.renderThumbs();
+    UI.updateBadge();
+    UI.closeGallery();
+  },
+};
+
+/* ───────────────────────────────────────
+   EXPORT MODULE
+─────────────────────────────────────── */
+const ExportModule = {
+  setQ(el) {
+    document.querySelectorAll('.q-opt').forEach(o => o.classList.remove('sel'));
+    el.classList.add('sel');
+    S.quality  = parseFloat(el.dataset.q);
+    S.pdfBlob  = null;
+    document.getElementById('share-wrap').style.display = 'none';
+  },
+
+  async generate() {
+    if (!S.pages.length) { UI.toast('Aucun scan'); return; }
+
+    const btn = document.getElementById('gen-btn');
+    btn.textContent = '⏳ Génération...';
+    btn.disabled = true;
+
+    await new Promise(r => setTimeout(r, 30)); /* yield UI paint */
+
+    try {
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pW = 210, pH = 297, m = 10;
+      const mW = pW - m * 2, mH = pH - m * 2;
+
+      for (let i = 0; i < S.pages.length; i++) {
+        const pg  = S.pages[i];
+        const img = await this._loadImg(pg.dataUrl);
+
+        /* Re-compress at selected quality */
+        const cc = document.createElement('canvas');
+        cc.width = pg.w; cc.height = pg.h;
+        cc.getContext('2d').drawImage(img, 0, 0);
+        const du = cc.toDataURL('image/jpeg', S.quality);
+
+        if (i > 0) pdf.addPage();
+
+        /* Fit image within A4 margins, preserve aspect ratio */
+        const ar = pg.w / pg.h;
+        let dW = mW, dH = mW / ar;
+        if (dH > mH) { dH = mH; dW = mH * ar; }
+        pdf.addImage(du, 'JPEG', m + (mW - dW) / 2, m + (mH - dH) / 2, dW, dH);
+      }
+
+      S.pdfBlob = pdf.output('blob');
+      document.getElementById('share-wrap').style.display = 'block';
+      btn.textContent = '✓ PDF généré';
+      UI.toast(`📄 PDF prêt — ${S.pages.length} page${S.pages.length > 1 ? 's' : ''}`);
+
+    } catch (err) {
+      console.error('PDF error:', err);
+      UI.toast('❌ Erreur lors de la génération');
+      btn.textContent = '📄 Générer PDF';
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  async share() {
+    if (!S.pdfBlob) return;
+    const filename = `scan_${new Date().toISOString().slice(0, 10)}_${Date.now()}.pdf`;
+    const file = new File([S.pdfBlob], filename, { type: 'application/pdf' });
+
+    /* Web Share API with files (mobile) */
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({
+          title: 'DocScan Pro',
+          text: `Document scanné — ${S.pages.length} page${S.pages.length > 1 ? 's' : ''}`,
+          files: [file],
+        });
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        /* Fall through to download */
+      }
+    }
+    /* Fallback: direct download */
+    this._download(S.pdfBlob, filename);
+  },
+
+  _download(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  },
+
+  _loadImg(src) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = src;
+    });
+  },
+};
+
+/* ───────────────────────────────────────
+   PWA — SERVICE WORKER REGISTRATION
+─────────────────────────────────────── */
+const PWA = {
+  async registerSW() {
+    if (!('serviceWorker' in navigator)) {
+      console.info('[PWA] Service Worker non supporté');
+      return;
+    }
+    try {
+      const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+      console.info('[PWA] SW enregistré:', reg.scope);
+
+      /* Notifier si une mise à jour est disponible */
+      reg.addEventListener('updatefound', () => {
+        const newSW = reg.installing;
+        newSW.addEventListener('statechange', () => {
+          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+            UI.toast('🔄 Mise à jour disponible — rechargez la page');
+          }
+        });
+      });
+    } catch (err) {
+      console.warn('[PWA] Echec SW:', err);
+    }
+  },
+
+  /* ── Génère et stocke toutes les icônes PWA via <canvas> ──
+     Évite d'avoir à committer des PNG dans le repo.
+     Les icônes sont stockées dans Cache Storage sous "icons/icon-NNN.png".
+  ────────────────────────────────────────────────────────── */
+  async generateIcons() {
+    if (!('caches' in window)) return;
+    const SIZES = [72, 96, 128, 144, 152, 192, 384, 512];
+    const cache = await caches.open('docscan-icons-v1');
+
+    const needGen = await Promise.all(
+      SIZES.map(async s => !(await cache.match(`./icons/icon-${s}.png`)))
+    );
+    if (!needGen.some(Boolean)) return; /* tous déjà en cache */
+
+    for (let i = 0; i < SIZES.length; i++) {
+      if (!needGen[i]) continue;
+      const s   = SIZES[i];
+      const png = this._drawIcon(s);
+      const res = await fetch(png);
+      await cache.put(`./icons/icon-${s}.png`, res);
+    }
+    console.info('[PWA] Icônes générées et mises en cache');
+  },
+
+  _drawIcon(size) {
+    const c   = document.createElement('canvas');
+    c.width   = size;
+    c.height  = size;
+    const ctx = c.getContext('2d');
+    const r   = size * 0.22; /* corner radius */
+
+    /* Background */
+    ctx.fillStyle = '#07080F';
+    this._roundRect(ctx, 0, 0, size, size, r);
+    ctx.fill();
+
+    /* Accent glow */
+    const grd = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size * .52);
+    grd.addColorStop(0,   'rgba(0,245,196,.22)');
+    grd.addColorStop(1,   'rgba(0,245,196,0)');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, size, size);
+
+    /* Document shape */
+    const mx = size * .22, my = size * .16;
+    const mw = size - mx * 2, mh = size - my * 2;
+    const fr = size * .06;
+    ctx.fillStyle = 'rgba(20,22,38,.95)';
+    this._roundRect(ctx, mx, my, mw, mh, fr);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,245,196,.55)';
+    ctx.lineWidth   = size * .026;
+    ctx.stroke();
+
+    /* Lines */
+    const lx1 = mx + mw * .18, lx2 = mx + mw * .82;
+    const ly   = [.38, .52, .66, .78].map(f => my + mh * f);
+    ctx.strokeStyle = 'rgba(0,245,196,.35)';
+    ctx.lineWidth   = size * .018;
+    ctx.lineCap     = 'round';
+    ly.forEach(y => {
+      ctx.beginPath(); ctx.moveTo(lx1, y); ctx.lineTo(lx2, y); ctx.stroke();
+    });
+
+    /* Corner accent — scan indicator */
+    const cq = size * .18;
+    [[mx, my], [mx + mw, my]].forEach(([cx, cy], ii) => {
+      const sign = ii === 0 ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(cx + sign * cq * .55, cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + cq * .55);
+      ctx.strokeStyle = '#00F5C4';
+      ctx.lineWidth   = size * .038;
+      ctx.lineCap     = 'round';
+      ctx.stroke();
+    });
+
+    return c.toDataURL('image/png');
+  },
+
+  _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  },
+
+  /* ── Prompt d'installation A2HS ── */
+  initInstallPrompt() {
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      this._installEvt = e;
+      /* On affiche un bouton discret dans le HUD */
+      this._showInstallBtn();
+    });
+    window.addEventListener('appinstalled', () => {
+      document.getElementById('install-btn')?.remove();
+      UI.toast('✓ DocScan Pro installé !');
+    });
+  },
+
+  _showInstallBtn() {
+    if (document.getElementById('install-btn')) return;
+    const btn = document.createElement('div');
+    btn.id = 'install-btn';
+    btn.className = 'chip btn';
+    btn.textContent = '⬇ Installer';
+    btn.style.cssText = 'background:rgba(0,245,196,.12);color:var(--accent);border-color:var(--bacc)';
+    btn.onclick = async () => {
+      if (!this._installEvt) return;
+      this._installEvt.prompt();
+      const { outcome } = await this._installEvt.userChoice;
+      if (outcome === 'accepted') btn.remove();
+      this._installEvt = null;
+    };
+    /* Insérer dans le HUD à gauche */
+    const hud = document.getElementById('hud');
+    if (hud) hud.prepend(btn);
+  },
+};
+
+/* ───────────────────────────────────────
+   BOOT SEQUENCE
+─────────────────────────────────────── */
+function checkReady() {
+  if (S.cvOK && S.camOK) {
+    UI.pbar(100, 'Prêt !');
+    setTimeout(() => { UI.hideLoading(); DetectionModule.start(); }, 600);
+  }
+}
+
+/* Safety timeout: start without CV if it takes too long (e.g. slow network) */
+let cvTimeout = setTimeout(() => {
+  if (!S.cvOK) {
+    S.cvOK = true;
+    UI.pbar(72, 'Mode basique (sans WASM)');
+    checkReady();
+  }
+}, 20000);
+
+/* Animate loading bar while waiting for OpenCV */
+let _lp = 52, _li = setInterval(() => {
+  if (S.cvOK || _lp >= 70) { clearInterval(_li); return; }
+  _lp += 1.2;
+  UI.pbar(_lp, 'Chargement OpenCV.js (WASM)...');
+}, 280);
+
+/* Start camera + PWA features */
+(async () => {
+  UI.pbar(5, 'Démarrage...');
+  /* Lancer en parallèle : caméra + enregistrement SW + génération icônes */
+  await Promise.allSettled([
+    CameraModule.init(),
+    PWA.registerSW(),
+    PWA.generateIcons(),
+  ]);
+  PWA.initInstallPrompt();
+})();
+</script>
+
+</body>
+</html>
